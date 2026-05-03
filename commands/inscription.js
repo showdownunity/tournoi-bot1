@@ -32,17 +32,10 @@ module.exports = {
     await interaction.deferReply({ ephemeral: true });
 
     const tournoi = getTournoiByPostId(interaction.channel.id);
-    if (!tournoi) {
-      return interaction.editReply({ content: '❌ Aucun tournoi trouvé pour ce post.' });
-    }
-    if (tournoi.status === 'closed') {
-      return interaction.editReply({ content: '❌ Ce tournoi est **clôturé**.' });
-    }
-    if (isDeadlinePassed(tournoi.deadline)) {
-      return interaction.editReply({ content: '❌ La **deadline d\'inscription** est passée !' });
-    }
+    if (!tournoi) return interaction.editReply({ content: '❌ Aucun tournoi trouvé pour ce post.' });
+    if (tournoi.status === 'closed') return interaction.editReply({ content: '❌ Ce tournoi est **clôturé**.' });
+    if (isDeadlinePassed(tournoi.deadline)) return interaction.editReply({ content: '❌ La **deadline d\'inscription** est passée !' });
 
-    // Collecter les membres mentionnés
     const captain = interaction.user;
     const mentionedUsers = [];
     for (let i = 2; i <= 10; i++) {
@@ -53,64 +46,54 @@ module.exports = {
     const allMembers = [captain, ...mentionedUsers];
     const expectedCount = tournoi.playersPerTeam;
 
-    // Vérifier le nombre de joueurs
     if (allMembers.length !== expectedCount) {
       return interaction.editReply({
-        content: `❌ Ce tournoi est en **${expectedCount} joueur(s)** par team.\nTu as mentionné ${allMembers.length} joueur(s) (toi inclus).\n\nExemple : \`/inscription${expectedCount > 1 ? ' @joueur2' : ''}${expectedCount > 2 ? ' @joueur3' : ''}\``,
+        content: `❌ Ce tournoi est en **${expectedCount} joueur(s)** par team.\nTu as mentionné ${allMembers.length} joueur(s) (toi inclus).\n\nExemple : \`/inscription${expectedCount >= 2 ? ' @joueur2' : ''}${expectedCount >= 3 ? ' @joueur3' : ''}\``,
       });
     }
 
-    // Vérifier les bots
     for (const u of allMembers) {
       if (u.bot) return interaction.editReply({ content: '❌ Tu ne peux pas inscrire un bot !' });
     }
 
-    // Vérifier les doublons dans la mention
     const ids = allMembers.map(u => u.id);
     if (new Set(ids).size !== ids.length) {
       return interaction.editReply({ content: '❌ Tu as mentionné le même joueur plusieurs fois !' });
     }
 
-    // Vérifier que personne n'est déjà inscrit
     for (const u of allMembers) {
       const existing = getTeamByMember(tournoi.id, u.id);
-      if (existing) {
-        return interaction.editReply({ content: `❌ <@${u.id}> est **déjà inscrit(e)** à ce tournoi !` });
-      }
+      if (existing) return interaction.editReply({ content: `❌ <@${u.id}> est **déjà inscrit(e)** à ce tournoi !` });
     }
 
-    // Déterminer le statut (participant ou liste d'attente)
     const participants = getParticipantTeams(tournoi.id);
     const isFull = participants.length >= tournoi.maxTeams;
     const status = isFull ? 'waiting' : 'participant';
     const position = getNextPosition(tournoi.id);
 
-    // Créer la team
     const teamId = generateId();
-    createTeam({
-      id: teamId,
-      tournoisId: tournoi.id,
-      captainId: captain.id,
-      members: ids,
-      position,
-      status,
-    });
+    createTeam({ id: teamId, tournoisId: tournoi.id, captainId: captain.id, members: ids, position, status });
 
-    // Attribuer les rôles
+    // Attribution des rôles via ID
     const guild = interaction.guild;
-    const roleName = status === 'participant' ? 'Participant' : 'Liste d\'attente';
-    let role = guild.roles.cache.find(r => r.name === roleName);
-    if (role) {
-      for (const u of allMembers) {
-        const member = await guild.members.fetch(u.id).catch(() => null);
-        if (member) await member.roles.add(role).catch(() => {});
+    const roleId = status === 'participant'
+      ? process.env.PARTICIPANT_ROLE_ID
+      : process.env.WAITING_ROLE_ID;
+
+    if (roleId) {
+      const role = guild.roles.cache.get(roleId);
+      if (role) {
+        for (const u of allMembers) {
+          const member = await guild.members.fetch(u.id).catch(() => null);
+          if (member) await member.roles.add(role).catch(e => console.warn(`⚠️ Impossible d'ajouter le rôle à ${u.id}:`, e.message));
+        }
+      } else {
+        console.warn(`⚠️ Rôle introuvable avec l'ID: ${roleId}`);
       }
     }
 
     // Mettre à jour l'embed
     await updateEmbed(interaction, tournoi);
-
-    // DM au capitaine
     await dmInscriptionConfirmee(captain, tournoi, ids);
 
     if (status === 'participant') {
@@ -123,13 +106,9 @@ module.exports = {
 
 async function updateEmbed(interaction, tournoi) {
   try {
-    const thread = interaction.channel;
-    const messages = await thread.messages.fetch({ limit: 20 });
+    const messages = await interaction.channel.messages.fetch({ limit: 20 });
     const embedMsg = messages.find(m => m.author.bot && m.embeds.length > 0);
-    if (embedMsg) {
-      const newEmbed = buildTournoiEmbed(tournoi);
-      await embedMsg.edit({ embeds: [newEmbed] });
-    }
+    if (embedMsg) await embedMsg.edit({ embeds: [buildTournoiEmbed(tournoi)] });
   } catch (e) {
     console.warn('⚠️ Impossible de mettre à jour l\'embed:', e.message);
   }
