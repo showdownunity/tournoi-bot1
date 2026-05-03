@@ -10,6 +10,12 @@ module.exports = {
     .setName('open-event')
     .setDescription('Créer un nouveau tournoi (Admin uniquement)')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addChannelOption(opt =>
+      opt.setName('forum')
+        .setDescription('Le channel forum où créer le tournoi')
+        .setRequired(true)
+        .addChannelTypes(ChannelType.GuildForum)
+    )
     .addStringOption(opt =>
       opt.setName('jeu')
         .setDescription('Le jeu du tournoi')
@@ -63,16 +69,9 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    // Vérifier qu'on est dans un channel forum
-    if (interaction.channel.type !== ChannelType.GuildForum) {
-      return interaction.reply({
-        content: '❌ Cette commande doit être utilisée dans un **channel Forum** !',
-        ephemeral: true,
-      });
-    }
-
     await interaction.deferReply({ ephemeral: true });
 
+    const forumChannel = interaction.options.getChannel('forum');
     const jeu = interaction.options.getString('jeu');
     const nom = interaction.options.getString('nom');
     const date = interaction.options.getString('date');
@@ -86,14 +85,11 @@ module.exports = {
     const maps = mapsRaw ? mapsRaw.split(',').map(m => m.trim()).filter(Boolean) : [];
 
     // Chercher le tag correspondant au jeu dans le forum
-    const forumChannel = interaction.channel;
     const availableTags = forumChannel.availableTags || [];
     const matchingTag = availableTags.find(t => t.name.toLowerCase() === jeu.toLowerCase());
 
-    // Créer le post dans le forum
     const tournoiId = generateId();
 
-    // Données du tournoi temporaires pour l'embed initial
     const tournoiData = {
       id: tournoiId,
       forumPostId: null,
@@ -112,7 +108,7 @@ module.exports = {
       status: 'open',
     };
 
-    // Créer le post forum
+    // Créer le post dans le forum
     const threadOptions = {
       name: nom,
       message: { content: '⏳ Chargement du tournoi...' },
@@ -123,23 +119,21 @@ module.exports = {
 
     const thread = await forumChannel.threads.create(threadOptions);
 
-    // Sauvegarder en BDD
     tournoiData.forumPostId = thread.id;
     createTournoi(tournoiData);
 
-    // Construire et envoyer l'embed
+    // Envoyer l'embed
     const embed = buildTournoiEmbed(tournoiData);
     const embedMsg = await thread.send({ embeds: [embed] });
 
-    // Supprimer le message initial "Chargement..."
+    // Supprimer le message initial
     const starterMessage = await thread.fetchStarterMessage().catch(() => null);
     if (starterMessage) await starterMessage.delete().catch(() => {});
 
-    // Mettre à jour l'embedMessageId en BDD
     updateTournoiEmbed(tournoiId, embedMsg.id);
 
     await interaction.editReply({
-      content: `✅ Tournoi **${nom}** créé avec succès dans <#${thread.id}> !`,
+      content: `✅ Tournoi **${nom}** créé avec succès dans ${forumChannel} !`,
     });
   },
 };
