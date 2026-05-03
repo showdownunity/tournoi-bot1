@@ -4,7 +4,6 @@ const {
   getTeamByCaptain,
   deleteTeam,
   promoteFirstWaiting,
-  getParticipantTeams,
 } = require('../database/db');
 const { buildTournoiEmbed } = require('../utils/embed');
 const { dmDesinscription, dmPromotion } = require('../utils/dm');
@@ -25,17 +24,15 @@ module.exports = {
     if (!tournoi) return interaction.editReply({ content: '❌ Aucun tournoi trouvé pour ce post.' });
     if (tournoi.status === 'closed') return interaction.editReply({ content: '❌ Ce tournoi est **clôturé**.' });
 
-    const captain = interaction.user;
-    const team = getTeamByCaptain(tournoi.id, captain.id);
+    const team = getTeamByCaptain(tournoi.id, interaction.user.id);
     if (!team) return interaction.editReply({ content: '❌ Tu n\'es pas **capitaine** d\'une team dans ce tournoi !' });
 
     const guild = interaction.guild;
+    const participantRole = guild.roles.cache.get(process.env.PARTICIPANT_ROLE_ID);
+    const waitingRole = guild.roles.cache.get(process.env.WAITING_ROLE_ID);
     const wasParticipant = team.status === 'participant';
 
     // Retirer les rôles
-    const participantRole = guild.roles.cache.find(r => r.name === 'Participant');
-    const waitingRole = guild.roles.cache.find(r => r.name === "Liste d'attente");
-
     for (const memberId of team.members) {
       const member = await guild.members.fetch(memberId).catch(() => null);
       if (member) {
@@ -44,17 +41,13 @@ module.exports = {
       }
     }
 
-    // Supprimer la team
     deleteTeam(team.id);
+    await dmDesinscription(interaction.user, tournoi);
 
-    // DM au capitaine
-    await dmDesinscription(captain, tournoi);
-
-    // Promotion depuis la liste d'attente si la team était participant
+    // Promotion liste d'attente
     if (wasParticipant) {
       const promoted = promoteFirstWaiting(tournoi.id);
       if (promoted) {
-        // Attribuer le rôle Participant à la team promue
         if (participantRole) {
           for (const memberId of promoted.members) {
             const member = await guild.members.fetch(memberId).catch(() => null);
@@ -64,18 +57,12 @@ module.exports = {
             }
           }
         }
-
-        // DM au capitaine de la team promue
         const promotedCaptain = await guild.members.fetch(promoted.captainId).catch(() => null);
-        if (promotedCaptain) {
-          await dmPromotion(promotedCaptain.user, tournoi);
-        }
+        if (promotedCaptain) await dmPromotion(promotedCaptain.user, tournoi);
       }
     }
 
-    // Mettre à jour l'embed
     await updateEmbed(interaction, tournoi);
-
     await interaction.editReply({ content: `✅ Ta team a été **retirée** du tournoi **${tournoi.name}**.` });
   },
 };
@@ -84,9 +71,7 @@ async function updateEmbed(interaction, tournoi) {
   try {
     const messages = await interaction.channel.messages.fetch({ limit: 20 });
     const embedMsg = messages.find(m => m.author.bot && m.embeds.length > 0);
-    if (embedMsg) {
-      await embedMsg.edit({ embeds: [buildTournoiEmbed(tournoi)] });
-    }
+    if (embedMsg) await embedMsg.edit({ embeds: [buildTournoiEmbed(tournoi)] });
   } catch (e) {
     console.warn('⚠️ Impossible de mettre à jour l\'embed:', e.message);
   }
