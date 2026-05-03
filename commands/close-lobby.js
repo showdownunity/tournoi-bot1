@@ -25,19 +25,15 @@ module.exports = {
     if (tournoi.status === 'closed') return interaction.editReply({ content: '❌ Ce tournoi est **déjà clôturé**.' });
 
     const guild = interaction.guild;
-    const participantRole = guild.roles.cache.find(r => r.name === 'Participant');
-    const waitingRole = guild.roles.cache.find(r => r.name === "Liste d'attente");
+    const participantRole = guild.roles.cache.get(process.env.PARTICIPANT_ROLE_ID);
+    const waitingRole = guild.roles.cache.get(process.env.WAITING_ROLE_ID);
 
-    // Récupérer toutes les teams avant de fermer
-    const participants = getParticipantTeams(tournoi.id);
-    const waiting = getWaitingTeams(tournoi.id);
-    const allTeams = [...participants, ...waiting];
+    const allTeams = [...getParticipantTeams(tournoi.id), ...getWaitingTeams(tournoi.id)];
     const allMemberIds = allTeams.flatMap(t => t.members);
 
     let participantsCount = 0;
     let waitingCount = 0;
 
-    // Retirer les rôles à tous
     for (const memberId of allMemberIds) {
       const member = await guild.members.fetch(memberId).catch(() => null);
       if (member) {
@@ -52,34 +48,24 @@ module.exports = {
       }
     }
 
-    // Supprimer les channels
     let channelsDeleted = 0;
     if (tournoi.lobbyChannelId) {
       const lobby = guild.channels.cache.get(tournoi.lobbyChannelId);
-      if (lobby) {
-        await lobby.delete().catch(() => {});
-        channelsDeleted++;
-      }
+      if (lobby) { await lobby.delete().catch(() => {}); channelsDeleted++; }
     }
     if (tournoi.discussionChannelId) {
       const discussion = guild.channels.cache.get(tournoi.discussionChannelId);
-      if (discussion) {
-        await discussion.delete().catch(() => {});
-        channelsDeleted++;
-      }
+      if (discussion) { await discussion.delete().catch(() => {}); channelsDeleted++; }
     }
 
-    // Clôturer en BDD
     closeTournoi(tournoi.id);
 
-    // Mettre à jour l'embed dans le post
+    // Mettre à jour l'embed avec statut clôturé
     try {
       const messages = await interaction.channel.messages.fetch({ limit: 20 });
       const embedMsg = messages.find(m => m.author.bot && m.embeds.length > 0);
       if (embedMsg) {
-        // Recharger le tournoi depuis BDD pour avoir le statut 'closed'
-        const updatedTournoi = { ...tournoi, status: 'closed' };
-        await embedMsg.edit({ embeds: [buildTournoiEmbed(updatedTournoi)] });
+        await embedMsg.edit({ embeds: [buildTournoiEmbed({ ...tournoi, status: 'closed' })] });
       }
     } catch (e) {
       console.warn('⚠️ Impossible de mettre à jour l\'embed final:', e.message);
