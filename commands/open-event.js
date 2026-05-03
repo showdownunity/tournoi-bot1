@@ -108,10 +108,13 @@ module.exports = {
       status: 'open',
     };
 
-    // Créer le post dans le forum
+    // Construire l'embed AVANT de créer le post
+    const embed = buildTournoiEmbed(tournoiData);
+
+    // Créer le post avec l'embed directement comme message de départ
     const threadOptions = {
       name: nom,
-      message: { content: '⏳ Chargement du tournoi...' },
+      message: { embeds: [embed] },
     };
     if (matchingTag) {
       threadOptions.appliedTags = [matchingTag.id];
@@ -119,18 +122,14 @@ module.exports = {
 
     const thread = await forumChannel.threads.create(threadOptions);
 
+    // Récupérer le message de départ (starter message = l'embed)
+    const starterMessage = await thread.fetchStarterMessage().catch(() => null);
+    const embedMessageId = starterMessage ? starterMessage.id : null;
+
+    // Sauvegarder en BDD
     tournoiData.forumPostId = thread.id;
     createTournoi(tournoiData);
-
-    // Envoyer l'embed
-    const embed = buildTournoiEmbed(tournoiData);
-    const embedMsg = await thread.send({ embeds: [embed] });
-
-    // Supprimer le message initial
-    const starterMessage = await thread.fetchStarterMessage().catch(() => null);
-    if (starterMessage) await starterMessage.delete().catch(() => {});
-
-    updateTournoiEmbed(tournoiId, embedMsg.id);
+    if (embedMessageId) updateTournoiEmbed(tournoiId, embedMessageId);
 
     await interaction.editReply({
       content: `✅ Tournoi **${nom}** créé avec succès dans ${forumChannel} !`,
